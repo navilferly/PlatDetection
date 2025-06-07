@@ -5,6 +5,11 @@ from PIL import Image
 
 def sidebar_and_access():
     mode = st.sidebar.selectbox("Pilih Mode Akses", ["User", "Admin"])
+    if mode == "Admin":
+        password = st.sidebar.text_input("Masukkan Password Admin", type="password")
+        if password != "admin123":
+            st.sidebar.error("Password salah!")
+            return "User"
     return mode
 
 def show_admin_log():
