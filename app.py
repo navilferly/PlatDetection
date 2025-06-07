@@ -21,6 +21,7 @@ init_db()
 # Setup halaman
 st.set_page_config(page_title="Tiket Parkir Otomatis", layout="centered")
 st.title("🎟️ Tiket Parkir Otomatis")
+st.markdown("#### 🚘 Upload Gambar Kendaraan dengan Plat Nomor")
 
 # Mode akses
 mode = sidebar_and_access()
