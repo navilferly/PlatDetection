@@ -1,43 +1,56 @@
 import streamlit as st
-import pandas as pd
-from utils.db_manager import fetch_all_logs
+from utils.db_manager import get_all_logs, delete_log_by_plate_and_time, delete_all_logs
 from PIL import Image
+import pandas as pd  # Pastikan sudah diimpor
 
 def sidebar_and_access():
-    mode = st.sidebar.selectbox("Pilih Mode Akses", ["User", "Admin"])
+    mode = st.sidebar.selectbox("Pilih Mode", ["Pengguna", "Admin"])
     if mode == "Admin":
         password = st.sidebar.text_input("Masukkan Password Admin", type="password")
         if password != "admin123":
             st.sidebar.error("Password salah!")
-            return "User"
+            return "Pengguna"
     return mode
 
 def show_admin_log():
-    st.subheader("📋 Log Kendaraan (Database)")
+    # Baris judul + tombol Hapus Semua
+    col1, col2 = st.columns([6, 2])
+    with col1:
+        st.header("🧾 Riwayat Tiket Parkir")
+    with col2:
+        if st.button("🗑️ Hapus Semua Riwayat"):
+            confirm = st.checkbox("Konfirmasi hapus semua data", key="confirm_delete_all")
+            if confirm:
+                delete_all_logs()
+                st.success("Seluruh riwayat berhasil dihapus.")
+                st.experimental_rerun()
+            else:
+                st.warning("Centang konfirmasi terlebih dahulu untuk menghapus semua data.")
 
-    # Ambil data dari database
-    data = fetch_all_logs()
-    df = pd.DataFrame(data, columns=["ID", "Plat Nomor", "Waktu Masuk", "Gambar Path"])
+    logs = get_all_logs()
+    if not logs:
+        st.info("Belum ada data tiket parkir.")
+        return
 
-    # 🔍 Pencarian plat nomor
-    search_plate = st.text_input("Cari Plat Nomor (misal: B1234)", "").upper()
-    if search_plate:
-        df = df[df["Plat Nomor"].str.contains(search_plate, case=False)]
+    df = pd.DataFrame(logs, columns=["Plat Nomor", "Waktu Masuk", "Gambar Path"])
+    df = df.sort_values(by="Waktu Masuk", ascending=False)
 
-    # 📅 Filter tanggal masuk
-    start_date = st.date_input("Dari tanggal", pd.to_datetime("2024-01-01"))
-    end_date = st.date_input("Sampai tanggal", pd.to_datetime("today"))
-
-    # Konversi waktu ke datetime & filter
-    df["Waktu Masuk"] = pd.to_datetime(df["Waktu Masuk"])
-    df = df[(df["Waktu Masuk"].dt.date >= start_date) & (df["Waktu Masuk"].dt.date <= end_date)]
-
-    # 📸 Tampilkan gambar thumbnail
     st.markdown("### 🖼️ Hasil Deteksi")
-    for _, row in df.iterrows():
-        with st.expander(f"Plat: {row['Plat Nomor']} | Masuk: {row['Waktu Masuk'].strftime('%Y-%m-%d %H:%M:%S')}"):
-            st.image(row["Gambar Path"], caption=row["Gambar Path"], width=300)
 
-    # 📊 Tampilkan tabel lengkap
+    for _, row in df.iterrows():
+        with st.expander(f"🔹 Plat: {row['Plat Nomor']} | 🕒 {row['Waktu Masuk']}"):
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.image(row["Gambar Path"], width=100)
+            with col2:
+                st.markdown(f"""
+                **Plat Nomor:** `{row['Plat Nomor']}`  
+                **Waktu Masuk:** `{row['Waktu Masuk']}`  
+                """)
+                if st.button(f"🗑️ Hapus Tiket - {row['Plat Nomor']} {row['Waktu Masuk']}", key=f"{row['Plat Nomor']}_{row['Waktu Masuk']}"):
+                    delete_log_by_plate_and_time(row['Plat Nomor'], row['Waktu Masuk'])
+                    st.success("Data berhasil dihapus.")
+                    st.experimental_rerun()  # Refresh otomatis
+
     st.markdown("### 📑 Data Tabel")
     st.dataframe(df.drop(columns=["Gambar Path"]), use_container_width=True)
