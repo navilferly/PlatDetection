@@ -1,7 +1,8 @@
 import streamlit as st
 from utils.db_manager import get_all_logs, delete_log_by_plate_and_time, delete_all_logs
 from PIL import Image
-import pandas as pd  # Pastikan sudah diimpor
+import pandas as pd
+import os
 
 def sidebar_and_access():
     mode = st.sidebar.selectbox("Pilih Mode", ["Pengguna", "Admin"])
@@ -13,7 +14,7 @@ def sidebar_and_access():
     return mode
 
 def show_admin_log():
-    # Baris judul + tombol Hapus Semua
+    # Baris atas: judul dan tombol hapus semua
     col1, col2 = st.columns([6, 2])
     with col1:
         st.header("🧾 Riwayat Tiket Parkir")
@@ -40,8 +41,16 @@ def show_admin_log():
     for _, row in df.iterrows():
         with st.expander(f"🔹 Plat: {row['Plat Nomor']} | 🕒 {row['Waktu Masuk']}"):
             col1, col2 = st.columns([1, 3])
+
+            # Perbaiki path gambar
+            image_path = row["Gambar Path"].replace("\\", "/")
+
             with col1:
-                st.image(row["Gambar Path"], width=100)
+                if os.path.exists(image_path):
+                    st.image(image_path, width=100)
+                else:
+                    st.warning(f"Gambar tidak ditemukan: {image_path}")
+
             with col2:
                 st.markdown(f"""
                 **Plat Nomor:** `{row['Plat Nomor']}`  
@@ -50,7 +59,7 @@ def show_admin_log():
                 if st.button(f"🗑️ Hapus Tiket - {row['Plat Nomor']} {row['Waktu Masuk']}", key=f"{row['Plat Nomor']}_{row['Waktu Masuk']}"):
                     delete_log_by_plate_and_time(row['Plat Nomor'], row['Waktu Masuk'])
                     st.success("Data berhasil dihapus.")
-                    st.experimental_rerun()  # Refresh otomatis
+                    st.experimental_rerun()
 
     st.markdown("### 📑 Data Tabel")
     st.dataframe(df.drop(columns=["Gambar Path"]), use_container_width=True)
