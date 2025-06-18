@@ -4,81 +4,82 @@ import requests
 import pandas as pd
 from datetime import datetime
 
-# Import modul internal
-from utils.db_manager import init_db, insert_log_to_db
+from utils.db_manager import init_db, insert_log_to_db, get_log_by_plate, get_all_logs
 from utils.upload_input import upload_and_save_image
 from utils.detect_draw import draw_detection_on_image
 from utils.qr_generator import generate_plate_qr
-from utils.ticket_logger import generate_ticket_html
 from utils.dashboard_admin import sidebar_and_access, show_admin_log
 
-# Konfigurasi API
 API_TOKEN = 'Token 38feacaf631d8bfa6a98bc34f119da7cebee0c64'
 API_URL = 'https://api.platerecognizer.com/v1/plate-reader/'
 
-# Inisialisasi Database
+# Inisialisasi DB
 init_db()
 
-# Konfigurasi Halaman
 st.set_page_config(page_title="Tiket Parkir Otomatis", layout="centered")
-st.title("🎟️ Tiket Parkir Otomatis")
+st.title("🎟️ Tiket Parkir")
 
-# Sidebar Akses
+# Akses mode: Pengguna / Admin
 mode = sidebar_and_access()
 
-# Handle QR Scan via URL Query
+# === HANDLE SCAN QR (jika tetap ingin bisa) ===
 query_params = st.query_params
-if "plate" in query_params:
+if "plate" in query_params and not st.session_state.get("qr_scanned", False):
     plate_from_qr = query_params["plate"][0].upper()
     waktu_scan = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["qr_scanned"] = True
     st.success("✅ QR berhasil dipindai!")
     st.subheader("🔍 Hasil Scan QR")
     st.text(f"🚗 Plat Nomor : {plate_from_qr}")
     st.text(f"⏰ Waktu Scan : {waktu_scan}")
     st.stop()
 
-# Upload dan Deteksi Plat Nomor
-st.subheader("📷 Upload Gambar Plat Nomor")
-uploaded_file = st.file_uploader("Pilih gambar", type=["jpg", "jpeg", "png"])
+# === FITUR UNTUK PENGGUNA ===
+if mode == "Pengguna":
+    st.subheader("📷 Upload Gambar Plat Nomor")
+    uploaded_file = st.file_uploader("Pilih gambar", type=["jpg", "jpeg", "png"])
 
-if uploaded_file:
-    file_path = upload_and_save_image(uploaded_file)
-
-    with st.spinner("🔍 Memproses gambar..."):
-        try:
-            with open(file_path, 'rb') as img:
-                response = requests.post(
-                    API_URL,
-                    files=dict(upload=img),
-                    headers={'Authorization': API_TOKEN},
-                    timeout=10
-                )
-        except requests.exceptions.RequestException as e:
-            st.error(f"Gagal menghubungi API: {e}")
+    if uploaded_file:
+        if st.session_state.get("last_processed") == uploaded_file.name:
+            st.info("✅ Gambar ini sudah diproses sebelumnya.")
             st.stop()
+        else:
+            st.session_state["last_processed"] = uploaded_file.name
+
+        file_path = upload_and_save_image(uploaded_file)
+
+        with st.spinner("🔍 Memproses gambar..."):
+            try:
+                with open(file_path, 'rb') as img:
+                    response = requests.post(
+                        API_URL,
+                        files=dict(upload=img),
+                        headers={'Authorization': API_TOKEN},
+                        timeout=10
+                    )
+            except requests.exceptions.RequestException as e:
+                st.error(f"Gagal menghubungi API: {e}")
+                st.stop()
 
         if response.status_code in [200, 201]:
             data = response.json()
             if data.get("results"):
                 result = data["results"][0]
-                waktu_masuk = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                plate = result["plate"].upper()
+                waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                image_result, plate = draw_detection_on_image(file_path, result)
-                if not plate:
-                    st.warning("⚠️ Plat nomor tidak terdeteksi.")
-                    st.stop()
-
-                processed_filename = f"{plate}.png"
-                processed_path = os.path.join("static", processed_filename)
+                image_result, _ = draw_detection_on_image(file_path, result)
+                processed_path = os.path.join("static", f"{plate}.png")
                 image_result.save(processed_path)
 
+                # Simpan ke database
+                insert_log_to_db(plate, waktu, processed_path)
+
+                # Buat QR (opsional)
                 qr_path, full_url = generate_plate_qr(plate)
-                insert_log_to_db(plate, waktu_masuk, processed_path)
-                ticket_html = generate_ticket_html(plate, waktu_masuk, processed_path)
 
-                st.success("✅ Plat nomor berhasil terdeteksi")
+                st.success("✅ Plat nomor berhasil terdeteksi dan disimpan!")
 
-                # Tampilkan hasil deteksi
                 st.subheader("📸 Hasil Deteksi")
                 col1, col2 = st.columns(2)
                 with col1:
@@ -86,17 +87,14 @@ if uploaded_file:
                 with col2:
                     st.image(processed_path, caption="Gambar dengan Deteksi", use_container_width=True)
 
-                # QR Code dan Tiket
                 st.subheader("📎 QR Code")
-                st.image(qr_path, caption="Scan untuk buka tiket")
-                st.markdown(ticket_html, unsafe_allow_html=True)
+                st.image(qr_path, caption="Scan untuk buka data kendaraan")
 
-                # Tombol Unduh Gambar
                 with open(processed_path, "rb") as img_file:
                     st.download_button(
                         label="📥 Unduh Gambar Hasil",
                         data=img_file,
-                        file_name=processed_filename,
+                        file_name=f"{plate}.png",
                         mime="image/png"
                     )
             else:
@@ -104,6 +102,29 @@ if uploaded_file:
         else:
             st.error(f"Gagal request: {response.status_code}\n{response.text}")
 
-# Mode Admin
+# === FITUR UNTUK ADMIN SAJA ===
 if mode == "Admin":
+    st.write("---")
+    st.subheader("🛑 Kendaraan Keluar")
+    plate_out = st.text_input("No Polisi Keluar")
+    if st.button("🧾 Hitung Biaya"):
+        try:
+            log = get_log_by_plate(plate_out.upper())
+            if log:
+                waktu_masuk = datetime.strptime(log[2], "%Y-%m-%d %H:%M:%S")
+                waktu_keluar = datetime.now()
+                durasi = waktu_keluar - waktu_masuk
+                total_jam = max(1, int(durasi.total_seconds() // 3600))
+                biaya = total_jam * 3000
+
+                st.success("✅ Data ditemukan!")
+                st.write(f"🕒 Waktu Masuk: {waktu_masuk}")
+                st.write(f"🕒 Waktu Keluar: {waktu_keluar}")
+                st.write(f"⏳ Durasi: {durasi}")
+                st.write(f"💰 Biaya Parkir: Rp {biaya:,.0f}")
+            else:
+                st.warning("❌ Data kendaraan tidak ditemukan.")
+        except Exception as e:
+            st.error(f"Terjadi kesalahan: {e}")
+
     show_admin_log()
