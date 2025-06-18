@@ -1,9 +1,8 @@
 import streamlit as st
-from utils.db_manager import get_all_logs, delete_log_by_plate_and_time, delete_all_logs
-from PIL import Image
+from utils.db_manager import get_all_logs
 import pandas as pd
-import os
 
+# Sidebar: pilih mode (Admin/Pengguna) dengan password untuk admin
 def sidebar_and_access():
     mode = st.sidebar.selectbox("Pilih Mode", ["Pengguna", "Admin"])
     if mode == "Admin":
@@ -13,53 +12,41 @@ def sidebar_and_access():
             return "Pengguna"
     return mode
 
+# Menampilkan tabel data parkir untuk admin
 def show_admin_log():
-    # Baris atas: judul dan tombol hapus semua
-    col1, col2 = st.columns([6, 2])
-    with col1:
-        st.header("🧾 Riwayat Tiket Parkir")
-    with col2:
-        if st.button("🗑️ Hapus Semua Riwayat"):
-            confirm = st.checkbox("Konfirmasi hapus semua data", key="confirm_delete_all")
-            if confirm:
-                delete_all_logs()
-                st.success("Seluruh riwayat berhasil dihapus.")
-                st.experimental_rerun()
-            else:
-                st.warning("Centang konfirmasi terlebih dahulu untuk menghapus semua data.")
+    st.markdown("### 📊 Laporan Data Parkir")
 
     logs = get_all_logs()
     if not logs:
-        st.info("Belum ada data tiket parkir.")
+        st.info("Belum ada data kendaraan masuk.")
         return
 
-    df = pd.DataFrame(logs, columns=["Plat Nomor", "Waktu Masuk", "Gambar Path"])
-    df = df.sort_values(by="Waktu Masuk", ascending=False)
+    try:
+        # Cek jumlah kolom dan sesuaikan nama kolom
+        if len(logs[0]) == 4:
+            df = pd.DataFrame(logs, columns=["ID", "Plat Nomor", "Waktu Masuk", "Gambar Path"])
+        elif len(logs[0]) == 6:
+            df = pd.DataFrame(logs, columns=["ID", "Plat Nomor", "Waktu Masuk", "Gambar Path", "Waktu Keluar", "Biaya"])
+        else:
+            st.error(f"Struktur data dari database tidak sesuai. Jumlah kolom: {len(logs[0])}")
+            return
+    except Exception as e:
+        st.error(f"Gagal memproses data: {e}")
+        return
 
-    st.markdown("### 🖼️ Hasil Deteksi")
+    # Tampilkan tabel tanpa kolom gambar (supaya rapi)
+    if "Gambar Path" in df.columns:
+        df_display = df.drop(columns=["Gambar Path"])
+    else:
+        df_display = df
 
-    for _, row in df.iterrows():
-        with st.expander(f"🔹 Plat: {row['Plat Nomor']} | 🕒 {row['Waktu Masuk']}"):
-            col1, col2 = st.columns([1, 3])
+    st.dataframe(df_display, use_container_width=True)
 
-            # Perbaiki path gambar
-            image_path = row["Gambar Path"].replace("\\", "/")
-
-            with col1:
-                if os.path.exists(image_path):
-                    st.image(image_path, width=100)
-                else:
-                    st.warning(f"Gambar tidak ditemukan: {image_path}")
-
-            with col2:
-                st.markdown(f"""
-                **Plat Nomor:** `{row['Plat Nomor']}`  
-                **Waktu Masuk:** `{row['Waktu Masuk']}`  
-                """)
-                if st.button(f"🗑️ Hapus Tiket - {row['Plat Nomor']} {row['Waktu Masuk']}", key=f"{row['Plat Nomor']}_{row['Waktu Masuk']}"):
-                    delete_log_by_plate_and_time(row['Plat Nomor'], row['Waktu Masuk'])
-                    st.success("Data berhasil dihapus.")
-                    st.experimental_rerun()
-
-    st.markdown("### 📑 Data Tabel")
-    st.dataframe(df.drop(columns=["Gambar Path"]), use_container_width=True)
+    # Tombol download CSV
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download CSV",
+        data=csv,
+        file_name="laporan_parkir.csv",
+        key="download_laporan_csv"
+    )
