@@ -4,11 +4,15 @@ import requests
 import pandas as pd
 from datetime import datetime
 
-from utils.db_manager import init_db, insert_log_to_db, get_log_by_plate, get_all_logs
+from utils.db_manager import (
+    init_db, insert_log_to_db, get_log_by_plate,
+    get_all_logs, update_log_exit
+)
 from utils.upload_input import upload_and_save_image
 from utils.detect_draw import draw_detection_on_image
 from utils.qr_generator import generate_plate_qr
 from utils.dashboard_admin import sidebar_and_access, show_admin_log
+from utils.ticket_logger import generate_ticket_text
 
 API_TOKEN = 'Token 38feacaf631d8bfa6a98bc34f119da7cebee0c64'
 API_URL = 'https://api.platerecognizer.com/v1/plate-reader/'
@@ -22,7 +26,7 @@ st.title("🎟️ Tiket Parkir")
 # Akses mode: Pengguna / Admin
 mode = sidebar_and_access()
 
-# === HANDLE SCAN QR (jika tetap ingin bisa) ===
+# === HANDLE SCAN QR (opsional) ===
 query_params = st.query_params
 if "plate" in query_params and not st.session_state.get("qr_scanned", False):
     plate_from_qr = query_params["plate"][0].upper()
@@ -72,10 +76,8 @@ if mode == "Pengguna":
                 processed_path = os.path.join("static", f"{plate}.png")
                 image_result.save(processed_path)
 
-                # Simpan ke database
                 insert_log_to_db(plate, waktu, processed_path)
 
-                # Buat QR (opsional)
                 qr_path, full_url = generate_plate_qr(plate)
 
                 st.success("✅ Plat nomor berhasil terdeteksi dan disimpan!")
@@ -90,6 +92,10 @@ if mode == "Pengguna":
                 st.subheader("📎 QR Code")
                 st.image(qr_path, caption="Scan untuk buka data kendaraan")
 
+                st.subheader("🎫 Tiket Parkir")
+                ticket_text = generate_ticket_text(plate, waktu)
+                st.text(ticket_text)
+
                 with open(processed_path, "rb") as img_file:
                     st.download_button(
                         label="📥 Unduh Gambar Hasil",
@@ -102,7 +108,7 @@ if mode == "Pengguna":
         else:
             st.error(f"Gagal request: {response.status_code}\n{response.text}")
 
-# === FITUR UNTUK ADMIN SAJA ===
+# === FITUR UNTUK ADMIN ===
 if mode == "Admin":
     st.write("---")
     st.subheader("🛑 Kendaraan Keluar")
@@ -114,14 +120,26 @@ if mode == "Admin":
                 waktu_masuk = datetime.strptime(log[2], "%Y-%m-%d %H:%M:%S")
                 waktu_keluar = datetime.now()
                 durasi = waktu_keluar - waktu_masuk
-                total_jam = max(1, int(durasi.total_seconds() // 3600))
-                biaya = total_jam * 3000
+                durasi_menit = durasi.total_seconds() / 60
+
+                if durasi_menit <= 10:
+                    biaya = 300000
+                elif durasi_menit <= 60:
+                    biaya = 350000
+                else:
+                    biaya = 500000
 
                 st.success("✅ Data ditemukan!")
                 st.write(f"🕒 Waktu Masuk: {waktu_masuk}")
                 st.write(f"🕒 Waktu Keluar: {waktu_keluar}")
                 st.write(f"⏳ Durasi: {durasi}")
                 st.write(f"💰 Biaya Parkir: Rp {biaya:,.0f}")
+
+                update_log_exit(plate_out.upper(), waktu_keluar.strftime("%Y-%m-%d %H:%M:%S"), biaya)
+
+                qr_path, full_url = generate_plate_qr(plate_out.upper())
+                st.subheader("📎 QR Code (Setelah Kendaraan Keluar)")
+                st.image(qr_path, caption="QR berwarna merah jika kendaraan sudah keluar")
             else:
                 st.warning("❌ Data kendaraan tidak ditemukan.")
         except Exception as e:
